@@ -1,1 +1,173 @@
-
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>বাংলা হ্যাট স্পিচ ডিটেক্টর</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>বাংলা হ্যাট স্পিচ ডিটেক্টর</h1>
+        
+        <div class="input-group">
+            <textarea id="input-text" placeholder="এখানে আপনার টেক্সট লিখুন..."></textarea>
+        </div>
+        
+        <div id="error-message" class="error" style="display: none;"></div>
+        
+        <button id="check-btn" class="btn">
+            <span><i class="fas fa-search"></i> চেক করুন</span>
+            <div class="spinner"></div>
+        </button>
+        
+        <div id="result-container" class="result-container">
+            <div class="result-header">
+                <i id="result-icon" class="fas"></i>
+                <h2 id="result-text">ফলাফল:</h2>
+            </div>
+            
+            <div class="text-preview">
+                <span id="output-text"></span>
+            </div>
+            
+            <div class="probability-container">
+                <h3>প্রবাবিলিটি বিশ্লেষণ:</h3>
+                
+                <div class="progress-container">
+                    <div class="progress-label">
+                        <span>হ্যাট স্পিচ</span>
+                        <span id="hate-percent">0%</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div id="hate-progress" class="progress-fill hate-progress"></div>
+                    </div>
+                </div>
+                
+                <div class="progress-container">
+                    <div class="progress-label">
+                        <span>নরমাল স্পিচ</span>
+                        <span id="normal-percent">0%</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div id="normal-progress" class="progress-fill normal-progress"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>© 2023 বাংলা হ্যাট স্পিচ ডিটেক্টর | সকল অধিকার সংরক্ষিত</p>
+        </div>
+    </div>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const inputText = document.getElementById('input-text');
+            const checkBtn = document.getElementById('check-btn');
+            const errorMessage = document.getElementById('error-message');
+            const resultContainer = document.getElementById('result-container');
+            const resultIcon = document.getElementById('result-icon');
+            const resultText = document.getElementById('result-text');
+            const outputText = document.getElementById('output-text');
+            const hatePercent = document.getElementById('hate-percent');
+            const normalPercent = document.getElementById('normal-percent');
+            const hateProgress = document.getElementById('hate-progress');
+            const normalProgress = document.getElementById('normal-progress');
+            
+            // চেক বাটনে ক্লিক ইভেন্ট
+            checkBtn.addEventListener('click', function() {
+                const text = inputText.value.trim();
+                
+                // ভ্যালিডেশন চেক
+                if (!text) {
+                    showError("দয়া করে টেক্সট লিখুন");
+                    return;
+                }
+                
+                // লোডিং স্টেট
+                checkBtn.disabled = true;
+                checkBtn.classList.add('loading');
+                hideError();
+                hideResult();
+                
+                // AJAX রিকোয়েস্ট
+                fetch('/detect', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ text: text })
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('সার্ভার থেকে সঠিক রেসপন্স পাইনি');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    // ফলাফল দেখান
+                    showResult(data);
+                })
+                .catch(error => {
+                    showError(`ত্রুটি: ${error.message || 'সার্ভারে সমস্যা হয়েছে'}`);
+                })
+                .finally(() => {
+                    // লোডিং শেষ
+                    checkBtn.disabled = false;
+                    checkBtn.classList.remove('loading');
+                });
+            });
+            
+            // এরর মেসেজ দেখানো
+            function showError(message) {
+                errorMessage.textContent = message;
+                errorMessage.style.display = 'block';
+                resultContainer.style.display = 'none';
+            }
+            
+            // এরর লুকানো
+            function hideError() {
+                errorMessage.style.display = 'none';
+            }
+            
+            // ফলাফল লুকানো
+            function hideResult() {
+                resultContainer.style.display = 'none';
+            }
+            
+            // ফলাফল দেখানো
+            function showResult(data) {
+                // রেজাল্ট ক্লাস সেট করা
+                resultContainer.className = 'result-container ' + data.result_class;
+                
+                // আইকন সেট করা
+                if (data.result_class === 'hate') {
+                    resultIcon.className = 'fas fa-exclamation-triangle';
+                } else {
+                    resultIcon.className = 'fas fa-check-circle';
+                }
+                
+                // টেক্সট সেট করা
+                resultText.textContent = 'ফলাফল: ' + data.result;
+                outputText.textContent = data.text;
+                hatePercent.textContent = data.hate_prob + '%';
+                normalPercent.textContent = data.normal_prob + '%';
+                
+                // প্রোগ্রেস বার এনিমেশন
+                setTimeout(() => {
+                    hateProgress.style.width = data.hate_prob + '%';
+                    normalProgress.style.width = data.normal_prob + '%';
+                }, 100);
+                
+                // রেজাল্ট দেখানো
+                resultContainer.style.display = 'block';
+                
+                // স্ক্রল টু রেজাল্ট
+                resultContainer.scrollIntoView({ behavior: 'smooth' });
+            }
+        });
+    </script>
+</body>
+</html>

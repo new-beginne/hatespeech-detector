@@ -1,13 +1,16 @@
-# ডেটা ফোল্ডার এবং ডেটাসেট ফাইল
+# Data Folder
 data/
-*.csv
 
-# পাইথনের ক্যাশ
+# Python Caches
 __pycache__/
+*.pyc
 
-# লগ ফাইল
-*.log
-
-# ভার্চুয়াল এনভায়রনমেন্ট
+# Virtual Environment
 venv/
 .venv/
+
+# Log Files
+*.log
+
+# OS-specific files
+.DS_Store

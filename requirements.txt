@@ -8,3 +8,6 @@ langdetect
 requests
 pymongo
 dnspython
+# requirements.txt এর শেষে যোগ করুন
+gspread
+oauth2client

@@ -1,35 +1,57 @@
 import os
 import re
-import csv
 import joblib
 import logging
-import time # <-- নতুন ইম্পোর্ট
+import time
+import datetime
+import urllib.parse
 from flask import Flask, render_template, request, jsonify
 from threading import Lock
 from langdetect import detect as detect_language, LangDetectException
+from pymongo import MongoClient
+from pymongo.errors import ConnectionFailure
 
 # --- অ্যাপ এবং লগিং কনফিগারেশন ---
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- === নতুন কোড ব্লক শুরু === ---
+# --- ক্যাশ বাস্টিং এর জন্য কনটেক্সট প্রসেসর ---
 @app.context_processor
 def inject_version():
-    """
-    CSS এবং JS ফাইলের জন্য ক্যাশ বাস্টিং ভার্সন তৈরি করে।
-    এটি নিশ্চিত করবে যে ব্রাউজার সবসময় নতুন ফাইল লোড করে।
-    """
     return {'version': int(time.time())}
-# --- === নতুন কোড ব্লক শেষ === ---
+
+# --- ডেটাবেস কানেকশন (Render-এর Environment Variable থেকে নেওয়া হবে) ---
+# লোকাল টেস্টিং এর জন্য ডিফল্ট মান হিসেবে আপনার ক্রেডেনশিয়াল ব্যবহার করা হয়েছে
+MONGO_USERNAME = os.environ.get("MONGO_USERNAME", "mdhasannirob271")
+MONGO_PASSWORD = os.environ.get("MONGO_PASSWORD", "Odjlfg1XtZqcjx32")
+MONGO_CLUSTER_URL = os.environ.get("MONGO_CLUSTER_URL", "hatespeech.u6hagva.mongodb.net")
+DB_NAME = "hatespeech_db"
+COLLECTION_NAME = "wrong_predictions"
+
+# পাসওয়ার্ডে বিশেষ চিহ্ন থাকলে সমস্যা এড়ানোর জন্য
+encoded_password = urllib.parse.quote_plus(MONGO_PASSWORD)
+CONNECTION_STRING = f"mongodb+srv://{MONGO_USERNAME}:{encoded_password}@{MONGO_CLUSTER_URL}/?retryWrites=true&w=majority&appName=hatespeech"
+
+# --- ডেটাবেস ক্লায়েন্ট ---
+try:
+    client = MongoClient(CONNECTION_STRING)
+    client.admin.command('ping')
+    db = client[DB_NAME]
+    reports_collection = db[COLLECTION_NAME]
+    logger.info("✅ MongoDB ডেটাবেসের সাথে সফলভাবে সংযুক্ত হয়েছে।")
+except ConnectionFailure as e:
+    logger.error(f"❌ MongoDB ডেটাবেসে সংযোগ স্থাপন ব্যর্থ: {e}")
+    client = None
+except Exception as e:
+    logger.error(f"❌ একটি অপ্রত্যাশিত ত্রুটি ঘটেছে: {e}")
+    client = None
 
 # --- গ্লোবাল ভ্যারিয়েবল ---
-MODELS = {}
-VECTORIZERS = {}
-wrong_prediction_lock = Lock()
+MODELS, VECTORIZERS = {}, {}
+wrong_prediction_lock = Lock() # এই লকটি আর ব্যবহৃত হচ্ছে না, তবে রেখে দেওয়া হলো
 
 # --- Helper Functions ---
-
 def load_all_models():
     global MODELS, VECTORIZERS
     languages = {'bn': 'বাংলা', 'en': 'ইংরেজি'}
@@ -55,13 +77,13 @@ def preprocess_text(text):
     return text.lower()
 
 # --- Flask Routes ---
-
 @app.route('/')
 def home():
     return render_template('index.html')
 
 @app.route('/detect', methods=['POST'])
 def detect():
+    # ... (এই ফাংশনটি আগের মতোই থাকবে, কোনো পরিবর্তন নেই) ...
     if not MODELS or not VECTORIZERS:
         return jsonify({'error': 'কোনো মডেলই সার্ভারে লোড হয়নি। অ্যাডমিনের সাথে যোগাযোগ করুন।'}), 503
 
@@ -117,6 +139,9 @@ def detect():
 
 @app.route('/report_wrong', methods=['POST'])
 def handle_wrong_report():
+    """ব্যবহারকারীর পাঠানো ভুল রিপোর্ট MongoDB-তে সেভ করে।"""
+    if client is None:
+        return jsonify({'error': 'ডেটাবেস সংযোগে সমস্যা হয়েছে। রিপোর্ট সেভ করা সম্ভব নয়।'}), 500
     try:
         data = request.get_json()
         text, model_prediction = data.get('text'), data.get('model_prediction')
@@ -124,29 +149,29 @@ def handle_wrong_report():
             return jsonify({'error': 'অসম্পূর্ণ ডেটা পাঠানো হয়েছে।'}), 400
 
         correct_label = 1 - int(model_prediction)
-        report_file = os.path.join('data', 'wrong_predictions.csv')
-        os.makedirs('data', exist_ok=True)
         
-        with wrong_prediction_lock:
-            file_exists = os.path.isfile(report_file)
-            with open(report_file, 'a', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=['text', 'correct_label'])
-                if not file_exists:
-                    writer.writeheader()
-                writer.writerow({'text': text, 'correct_label': correct_label})
+        report_document = {
+            'text': text,
+            'correct_label': correct_label,
+            'timestamp': datetime.datetime.utcnow()
+        }
+        # ডেটাবেসে ডকুমেন্ট ইনসার্ট করা
+        reports_collection.insert_one(report_document)
         
-        logger.info(f"একটি ভুল রিপোর্ট সফলভাবে সেভ করা হয়েছে।")
+        logger.info(f"একটি ভুল রিপোর্ট সফলভাবে ডেটাবেসে সেভ করা হয়েছে।")
         return jsonify({'message': 'আপনার মতামতের জন্য ধন্যবাদ!'})
         
     except Exception as e:
-        logger.error(f"'/report_wrong' রুটে ত্রুটি: {e}", exc_info=True)
+        logger.error(f"'/report_wrong' রুটে ডেটাবেসে সেভ করতে ত্রুটি: {e}", exc_info=True)
         return jsonify({'error': 'সার্ভারে রিপোর্ট সেভ করা সম্ভব হয়নি।'}), 500
 
 if __name__ == '__main__':
+    # ... (এই অংশটি আগের মতোই থাকবে, কোনো পরিবর্তন নেই) ...
     try:
         import langdetect
-    except ImportError:
-        logger.error("`langdetect` লাইব্রেরি ইনস্টল করা নেই। `pip install langdetect` চালান।")
+        import pymongo
+    except ImportError as e:
+        logger.error(f"`{e.name}` লাইব্রেরি ইনস্টল করা নেই। `pip install {e.name}` চালান।")
     
     load_all_models()
     app.run(host='0.0.0.0', port=5000, debug=False)

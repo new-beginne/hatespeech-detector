@@ -1,25 +1,60 @@
 # utils.py
 
-import requests
-import os
+import pandas as pd
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 import logging
+import os
+import json
 
-def download_file_from_gdrive(url, output_path):
-    """গুগল ড্রাইভ থেকে ফাইল ডাউনলোড করে নির্দিষ্ট পাথে সেভ করে।"""
-    try:
-        dir_name = os.path.dirname(output_path)
-        if dir_name:
-            os.makedirs(dir_name, exist_ok=True)
-            
-        logging.info(f"'{output_path}' ফাইলে ডেটাসেট ডাউনলোড করা হচ্ছে...")
-        response = requests.get(url, stream=True)
-        response.raise_for_status()
+# গুগল ক্রেডেনশিয়াল লোড করা
+def get_gspread_client():
+    """
+    Render-এর এনভায়রনমেন্ট ভ্যারিয়েবল অথবা লোকাল credentials.json ফাইল থেকে
+    গুগল ক্রেডেনশিয়াল লোড করে এবং gspread ক্লায়েন্ট রিটার্ন করে।
+    """
+    scope = ["https://spreadsheets.google.com/feeds", 'https://www.googleapis.com/auth/drive']
+    
+    # Render এনভায়রনমেন্ট থেকে পড়ার চেষ্টা
+    creds_json_str = os.environ.get("GOOGLE_CREDENTIALS")
+    if creds_json_str:
+        logging.info("Render এনভায়রনমেন্ট ভ্যারিয়েবল থেকে গুগল ক্রেডেনশিয়াল লোড করা হচ্ছে...")
+        creds_dict = json.loads(creds_json_str)
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    # লোকাল ফাইল থেকে পড়ার চেষ্টা
+    elif os.path.exists('credentials.json'):
+        logging.info("লোকাল 'credentials.json' ফাইল থেকে গুগল ক্রেডেনশিয়াল লোড করা হচ্ছে...")
+        creds = ServiceAccountCredentials.from_json_keyfile_name('credentials.json', scope)
+    else:
+        logging.error("গুগল ক্রেডেনশিয়াল খুঁজে পাওয়া যায়নি!")
+        return None
         
-        with open(output_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-        logging.info(f"ডাউনলোড সম্পন্ন: {output_path}")
+    return gspread.authorize(creds)
+
+def read_sheet_as_df(sheet_name):
+    """ একটি গুগল শিটকে নাম দিয়ে খুলে pandas DataFrame হিসেবে রিটার্ন করে। """
+    try:
+        gc = get_gspread_client()
+        if not gc: return None
+        
+        worksheet = gc.open(sheet_name).sheet1
+        logging.info(f"'{sheet_name}' গুগল শিট সফলভাবে পড়া হয়েছে।")
+        return pd.DataFrame(worksheet.get_all_records())
+    except Exception as e:
+        logging.error(f"'{sheet_name}' গুগল শিট পড়তে সমস্যা: {e}")
+        return None
+
+def overwrite_sheet_with_df(df, sheet_name):
+    """ একটি pandas DataFrame দিয়ে সম্পূর্ণ গুগল শিটকে ওভাররাইট করে। """
+    try:
+        gc = get_gspread_client()
+        if not gc: return False
+
+        worksheet = gc.open(sheet_name).sheet1
+        worksheet.clear()
+        worksheet.update([df.columns.values.tolist()] + df.values.tolist())
+        logging.info(f"'{sheet_name}' গুগল শিট সফলভাবে আপডেট করা হয়েছে।")
         return True
     except Exception as e:
-        logging.error(f"ডেটাসেট ডাউনলোড করতে ত্রুটি: {e}")
+        logging.error(f"'{sheet_name}' গুগল শিটে লিখতে সমস্যা: {e}")
         return False

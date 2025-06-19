@@ -8,6 +8,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+from utils import download_file_from_gdrive # <-- নতুন ইম্পোর্ট
 
 # --- লগিং কনফিগারেশন ---
 logging.basicConfig(
@@ -68,10 +69,10 @@ def get_stop_words():
     }
     return list(stop_words)
 
-def train_model(csv_file):
-    """মডেল ট্রেইন, ইভ্যালুয়েট এবং সেভ করার মূল ফাংশন।"""
+def train_bengali_model(csv_file): # <-- ফাংশনের নাম পরিবর্তন করা হয়েছে
+    """বাংলা মডেল ট্রেইন, ইভ্যালুয়েট এবং সেভ করার মূল ফাংশন।"""
     try:
-        logger.info("===== মডেল ট্রেইনিং প্রক্রিয়া শুরু হচ্ছে =====")
+        logger.info("===== বাংলা মডেল ট্রেইনিং প্রক্রিয়া শুরু হচ্ছে =====")
         texts, labels = prepare_dataset(csv_file)
         
         if not texts or len(texts) < 100:
@@ -114,43 +115,39 @@ def train_model(csv_file):
         logger.info("ক্লাসিফিকেশন রিপোর্ট:\n" + report)
         
         os.makedirs('models', exist_ok=True)
-        model_path = os.path.join('models', 'model_bn.joblib')
-        vectorizer_path = os.path.join('models', 'vectorizer_bn.joblib')
+        model_path = os.path.join('models', 'model_bn.joblib') # <-- ফাইলের নাম পরিবর্তন
+        vectorizer_path = os.path.join('models', 'vectorizer_bn.joblib') # <-- ফাইলের নাম পরিবর্তন
         
         joblib.dump(model, model_path)
         joblib.dump(vectorizer, vectorizer_path)
         
         logger.info(f"মডেল সফলভাবে '{model_path}' ফাইলে সেভ করা হয়েছে।")
         logger.info(f"ভেক্টরাইজার সফলভাবে '{vectorizer_path}' ফাইলে সেভ করা হয়েছে।")
-        logger.info("===== মডেল ট্রেইনিং প্রক্রিয়া সম্পন্ন =====")
+        logger.info("===== বাংলা মডেল ট্রেইনিং প্রক্রিয়া সম্পন্ন =====")
         
     except Exception as e:
         logger.error(f"মডেল ট্রেইনিং এর সময় একটি গুরুতর ত্রুটি ঘটেছে: {e}", exc_info=True)
 
-# --- === প্রধান অংশ (এখানে পরিবর্তন আনা হয়েছে) === ---
+# --- === প্রধান অংশ (সম্পূর্ণ পরিবর্তন করা হয়েছে) === ---
 if __name__ == '__main__':
-    # ফাইলের পাথগুলো নির্ধারণ করা
-    RAW_DATA_PATH = os.path.join('data', 'Bangla_hatespeech.csv') # আপনার মূল, অপরিষ্কার ডেটাসেট
-    CLEANED_DATA_PATH = os.path.join('data', 'Cleaned_Bangla_hatespeech.csv') # পরিষ্কার করা ডেটাসেট এখানে সেভ হবে
-
-    # ধাপ ১: ডেটা পরিষ্কার করা (যদি প্রয়োজন হয়)
-    # যদি পরিষ্কার করা ডেটাসেট না থাকে, কিন্তু মূল ডেটাসেট থাকে, তবে clean_dataset.py চালান
-    if not os.path.exists(CLEANED_DATA_PATH) and os.path.exists(RAW_DATA_PATH):
-        logger.info(f"'{CLEANED_DATA_PATH}' পাওয়া যায়নি। ডেটা পরিষ্কার করা হচ্ছে...")
-        try:
-            # clean_dataset.py কে একটি মডিউল হিসেবে ইম্পোর্ট করা হচ্ছে
-            import clean_dataset 
-            # আপনার clean_dataset.py এর ফাংশনটিকে কল করা হচ্ছে
-            clean_dataset.debug_and_clean_dataset(RAW_DATA_PATH, CLEANED_DATA_PATH)
-        except ImportError:
-            logger.error("'clean_dataset.py' ফাইলটি ইম্পোর্ট করা সম্ভব হয়নি।")
-        except Exception as e:
-            logger.error(f"ডেটা পরিষ্কার করার সময় ত্রুটি: {e}")
-
-    # ধাপ ২: মডেল ট্রেইন করা
-    # নিশ্চিত করুন যে পরিষ্কার করা ডেটাসেটটি বিদ্যমান আছে
-    if os.path.exists(CLEANED_DATA_PATH):
-        train_model(CLEANED_DATA_PATH)
+    # ফোল্ডার তৈরি করা (যদি না থাকে)
+    os.makedirs('data', exist_ok=True)
+    
+    # গুগল ড্রাইভ থেকে বাংলা ডেটাসেট ডাউনলোড করার লিংক
+    BENGALI_DATASET_URL = "https://drive.google.com/uc?export=download&id=1GorLcJrmwo-RQmpBaaugdjU1nZayOKBZ"
+    BENGALI_DATA_PATH = os.path.join('data', 'Cleaned_Bangla_hatespeech.csv')
+    
+    # ধাপ ১: ডেটাসেট ডাউনলোড করা
+    # যদি ফাইলটি লোকাল মেশিনে না থাকে, তবেই ডাউনলোড করা হবে
+    if not os.path.exists(BENGALI_DATA_PATH):
+        logger.info(f"লোকাল মেশিনে '{BENGALI_DATA_PATH}' পাওয়া যায়নি। গুগল ড্রাইভ থেকে ডাউনলোড করা হচ্ছে...")
+        if not download_file_from_gdrive(BENGALI_DATASET_URL, BENGALI_DATA_PATH):
+            logger.error("ডেটাসেট ডাউনলোড ব্যর্থ। ট্রেইনিং বন্ধ করা হচ্ছে।")
+            # প্রোগাম থেকে বের হয়ে যাওয়া
+            exit()
     else:
-        logger.error(f"ট্রেইনিং শুরু করা সম্ভব নয় কারণ '{CLEANED_DATA_PATH}' ফাইলটি পাওয়া যায়নি।")
-        logger.error("দয়া করে নিশ্চিত করুন আপনার 'data' ফোল্ডারে একটি ডেটাসেট ফাইল আছে এবং clean_dataset.py সঠিকভাবে চলছে।")
+        logger.info(f"'{BENGALI_DATA_PATH}' ফাইলটি লোকাল মেশিনে পাওয়া গেছে। ডাউনলোড করার প্রয়োজন নেই।")
+    
+    # ধাপ ২: মডেল ট্রেইন করা
+    # train_bengali_model ফাংশনকে কল করা হচ্ছে
+    train_bengali_model(BENGALI_DATA_PATH)

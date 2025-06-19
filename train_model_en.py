@@ -8,6 +8,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, accuracy_score
+from utils import download_file_from_gdrive # <-- নতুন ইম্পোর্ট
 
 # --- লগিং কনফিগারেশন ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -80,7 +81,7 @@ def train_english_model(csv_file):
         model = LogisticRegression(
             max_iter=1000,
             class_weight='balanced',
-            C=5.0, # ইংরেজি ভাষার জন্য C-এর মান কিছুটা ভিন্ন হতে পারে
+            C=5.0,
             solver='liblinear'
         )
         model.fit(X_train, y_train)
@@ -88,12 +89,11 @@ def train_english_model(csv_file):
         logger.info("===== ইংরেজি মডেল ইভ্যালুয়েশন =====")
         y_pred = model.predict(X_test)
         accuracy = accuracy_score(y_test, y_pred)
-        report = classification_report(y_test, y_pred, target_names=['Normal', 'Hate/Offensive'])
+        report = classification_report(y_test, y_pred, target_names=['Normal', 'Hate/Offensive'], zero_division=0)
         
         logger.info(f"ইংরেজি মডেলের অ্যাকুরেসি: {accuracy:.2%}")
         logger.info("ক্লাসিফিকেশন রিপোর্ট:\n" + report)
         
-        # মডেল এবং ভেক্টরাইজার _en.joblib হিসেবে সেভ করা
         os.makedirs('models', exist_ok=True)
         model_path = os.path.join('models', 'model_en.joblib')
         vectorizer_path = os.path.join('models', 'vectorizer_en.joblib')
@@ -103,13 +103,28 @@ def train_english_model(csv_file):
         
         logger.info(f"ইংরেজি মডেল সফলভাবে '{model_path}' ফাইলে সেভ করা হয়েছে।")
         logger.info(f"ইংরেজি ভেক্টরাইজার সফলভাবে '{vectorizer_path}' ফাইলে সেভ করা হয়েছে।")
+        logger.info("===== ইংরেজি মডেল ট্রেইনিং প্রক্রিয়া সম্পন্ন =====")
 
     except Exception as e:
         logger.error(f"ইংরেজি মডেল ট্রেইনিং এর সময় একটি ত্রুটি ঘটেছে: {e}", exc_info=True)
 
+# --- === প্রধান অংশ (পরিবর্তন আনা হয়েছে) === ---
 if __name__ == '__main__':
-    # প্রস্তুত করা ইংরেজি ডেটাসেট ফাইলের পাথ
-    english_csv_path = os.path.join('data', 'english_hatespeech_cleaned.csv')
-    
-    # ইংরেজি মডেল ট্রেইনিং ফাংশন কল করা
-    train_english_model(english_csv_path)
+    # ফোল্ডার তৈরি করা
+    os.makedirs('data', exist_ok=True)
+
+    # গুগল ড্রাইভ থেকে ইংরেজি ডেটাসেট ডাউনলোড করার লিংক
+    ENGLISH_DATASET_URL = "https://drive.google.com/uc?export=download&id=1UdU6HqyL57ZK9-uU26gkf92zl7a4gL7T"
+    ENGLISH_DATA_PATH = os.path.join('data', 'english_hatespeech_cleaned.csv')
+
+    # ধাপ ১: ডেটাসেট ডাউনলোড করা
+    if not os.path.exists(ENGLISH_DATA_PATH):
+        logger.info(f"লোকাল মেশিনে '{ENGLISH_DATA_PATH}' পাওয়া যায়নি। গুগল ড্রাইভ থেকে ডাউনলোড করা হচ্ছে...")
+        if not download_file_from_gdrive(ENGLISH_DATASET_URL, ENGLISH_DATA_PATH):
+            logger.error("ডেটাসেট ডাউনলোড ব্যর্থ। ট্রেইনিং বন্ধ করা হচ্ছে।")
+            exit()
+    else:
+        logger.info(f"'{ENGLISH_DATA_PATH}' ফাইলটি লোকাল মেশিনে পাওয়া গেছে। ডাউনলোড করার প্রয়োজন নেই।")
+        
+    # ধাপ ২: মডেল ট্রেইন করা
+    train_english_model(ENGLISH_DATA_PATH)

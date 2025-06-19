@@ -227,3 +227,82 @@ textarea:focus {
     border-top: 1px solid #eee;
     padding-top: 20px;
 }
+
+/* 
+======================================================
+    নতুন কোড: রেসপন্সিভ ডিজাইনের জন্য মিডিয়া কোয়েরি
+======================================================
+*/
+
+/* --- ট্যাবলেট এবং বড় মোবাইল স্ক্রিনের জন্য (768px এর নিচে) --- */
+@media (max-width: 768px) {
+    body {
+        align-items: flex-start; /* কন্টেইনার উপরে রাখার জন্য */
+        padding: 15px;
+    }
+
+    .container {
+        padding: 25px; /* প্যাডিং কিছুটা কমানো হলো */
+    }
+
+    h1 {
+        font-size: 28px; /* ফন্ট সাইজ কমানো হলো */
+    }
+
+    textarea {
+        height: 120px;
+        font-size: 16px;
+    }
+
+    .btn {
+        padding: 12px 30px;
+        font-size: 16px;
+    }
+
+    .result-header {
+        font-size: 20px;
+    }
+
+    .text-preview {
+        font-size: 16px;
+    }
+}
+
+/* --- ছোট মোবাইল স্ক্রিনের জন্য (480px এর নিচে) --- */
+@media (max-width: 480px) {
+    body {
+        padding: 10px;
+    }
+    
+    .container {
+        padding: 20px;
+        border-radius: 15px;
+    }
+
+    h1 {
+        font-size: 24px; /* ফন্ট সাইজ আরও কমানো হলো */
+        margin-bottom: 20px;
+    }
+
+    textarea {
+        height: 100px;
+    }
+
+    .result-container {
+        padding: 20px;
+    }
+
+    .result-header i {
+        font-size: 22px;
+    }
+
+    .text-preview {
+        padding: 10px;
+    }
+
+    /* --- ফিডব্যাক বাটনের জন্য নতুন স্টাইল (যদি যোগ করা হয়ে থাকে) --- */
+    .btn-danger {
+        width: 100%; /* ছোট স্ক্রিনে বাটনটি সম্পূর্ণ জায়গা নেবে */
+        padding: 10px;
+    }
+}

@@ -3,123 +3,58 @@ import re
 import csv
 import joblib
 import logging
-import numpy as np
+import time # <-- নতুন ইম্পোর্ট
 from flask import Flask, render_template, request, jsonify
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report
+from threading import Lock
+from langdetect import detect as detect_language, LangDetectException
 
+# --- অ্যাপ এবং লগিং কনফিগারেশন ---
 app = Flask(__name__)
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-HATE_KEYWORDS = {
-    "শালা", "পুত", "মাগি", "পোলা", "চুদা", "চোদা", "গালি", "জারজ", "পতিতা", 
-    "পুটকি", "আবাল", "খানকি", "কুত্তা", "বাইনচোদ", "মাদারচোদ", "হালা", "বাল"
-}
+# --- === নতুন কোড ব্লক শুরু === ---
+@app.context_processor
+def inject_version():
+    """
+    CSS এবং JS ফাইলের জন্য ক্যাশ বাস্টিং ভার্সন তৈরি করে।
+    এটি নিশ্চিত করবে যে ব্রাউজার সবসময় নতুন ফাইল লোড করে।
+    """
+    return {'version': int(time.time())}
+# --- === নতুন কোড ব্লক শেষ === ---
 
-def prepare_dataset():
-    texts, labels = [], []
-    csv_file = 'data/Cleaned_Bangla_hatespeech.csv'
-    if not os.path.exists(csv_file):
-        logger.error(f"'{csv_file}' ফাইলটি খুঁজে পাওয়া যায়নি! ফালব্যাক ডেটা ব্যবহার করা হচ্ছে।")
-        return get_fallback_data()
-    try:
-        with open(csv_file, 'r', encoding='utf-8') as file:
-            reader = csv.DictReader(file)
-            for row in reader:
-                if 'text' in row and 'label' in row and row['text'] and row['label'] in ['0', '1']:
-                    texts.append(row['text'])
-                    labels.append(int(row['label']))
-        
-        if not texts: return get_fallback_data()
-        
-        total, hate_count = len(texts), sum(labels)
-        logger.info(f"ডেটাসেট পরিসংখ্যান: মোট={total}, হ্যাট={hate_count} ({(hate_count/total):.1%}), নরমাল={total-hate_count} ({(total-hate_count)/total:.1%})")
-        return texts, labels
-    except Exception as e:
-        logger.error(f"ডেটাসেট লোড করতে ত্রুটি: {e}")
-        return get_fallback_data()
+# --- গ্লোবাল ভ্যারিয়েবল ---
+MODELS = {}
+VECTORIZERS = {}
+wrong_prediction_lock = Lock()
 
-def get_fallback_data():
-    logger.warning("ফালব্যাক ডেটাসেট ব্যবহার হচ্ছে...")
-    return [
-        "তুমি খুব বোকা মানুষ", "আমি তোমাকে ঘৃণা করি", "তুমি আমার সেরা বন্ধু", "আমি তোমার প্রতি কৃতজ্ঞ",
-        "তোমার মত অপদার্থ আর দেখিনি", "তুমি সত্যিই অসাধারণ", "তুমি সম্পূর্ণ ব্যর্থ", "তোমার সাহায্যের জন্য ধন্যবাদ"
-    ], [1, 1, 0, 0, 1, 0, 1, 0]
+# --- Helper Functions ---
+
+def load_all_models():
+    global MODELS, VECTORIZERS
+    languages = {'bn': 'বাংলা', 'en': 'ইংরেজি'}
+    logger.info("সকল মডেল লোড করা শুরু হচ্ছে...")
+    for lang_code, lang_name in languages.items():
+        model_path = os.path.join('models', f'model_{lang_code}.joblib')
+        vectorizer_path = os.path.join('models', f'vectorizer_{lang_code}.joblib')
+        if os.path.exists(model_path) and os.path.exists(vectorizer_path):
+            try:
+                MODELS[lang_code] = joblib.load(model_path)
+                VECTORIZERS[lang_code] = joblib.load(vectorizer_path)
+                logger.info(f"✅ {lang_name} ({lang_code}) মডেল সফলভাবে লোড হয়েছে।")
+            except Exception as e:
+                logger.error(f"❌ {lang_name} ({lang_code}) মডেল লোড করার সময় ত্রুটি: {e}", exc_info=True)
+        else:
+            logger.warning(f"⚠️ {lang_name} ({lang_code}) মডেল ফাইল খুঁজে পাওয়া যায়নি।")
 
 def preprocess_text(text):
+    if not isinstance(text, str): return ""
     text = re.sub(r'<.*?>', '', text)
     text = re.sub(r'[^\w\s\u0980-\u09FFa-zA-Z]', '', text)
     text = re.sub(r'\s+', ' ', text).strip()
     return text.lower()
 
-def get_stop_words():
-    return [
-        "এবং", "অথবা", "কিন্তু", "যদি", "তবে", "যে", "কি", "না", "হ্যাঁ", "তো", "কে", "আর", "ও", 
-        "নেই", "হবে", "হয়", "করতে", "করবে", "যাও", "গেলে", "থেকে", "পর্যন্ত", "তাহলে", "করে", "হল", "হলে"
-    ]
-
-def train_model():
-    try:
-        logger.info("মডেল ট্রেইনিং শুরু হচ্ছে...")
-        texts, labels = prepare_dataset()
-        if len(texts) < 20:
-            logger.error("ট্রেইনিং এর জন্য পর্যাপ্ত ডেটা নেই।")
-            return None, None
-            
-        processed_texts = [preprocess_text(text) for text in texts]
-        
-        vectorizer = TfidfVectorizer(max_features=5000, ngram_range=(1, 2), stop_words=get_stop_words())
-        X = vectorizer.fit_transform(processed_texts)
-        
-        model = LogisticRegression(max_iter=1000, class_weight='balanced', C=1.0, solver='liblinear')
-        
-        X_train, X_test, y_train, y_test = train_test_split(X, labels, test_size=0.2, stratify=labels, random_state=42)
-        model.fit(X_train, y_train)
-        
-        y_pred = model.predict(X_test)
-        report = classification_report(y_test, y_pred, zero_division=0)
-        logger.info("ক্লাসিফিকেশন রিপোর্ট:\n" + report)
-        
-        os.makedirs('models', exist_ok=True)
-        joblib.dump(model, 'models/model.joblib')
-        joblib.dump(vectorizer, 'models/vectorizer.joblib')
-        
-        logger.info("মডেল সফলভাবে ট্রেইন ও সেভ করা হয়েছে।")
-        return model, vectorizer
-    except Exception as e:
-        logger.error(f"মডেল ট্রেইনিং এ মারাত্মক ত্রুটি: {e}", exc_info=True)
-        return None, None
-
-def load_model():
-    model_path, vectorizer_path = 'models/model.joblib', 'models/vectorizer.joblib'
-    if not os.path.exists(model_path) or not os.path.exists(vectorizer_path):
-        return train_model()
-    try:
-        model = joblib.load(model_path)
-        vectorizer = joblib.load(vectorizer_path)
-        return model, vectorizer
-    except Exception as e:
-        logger.error(f"মডেল লোড করতে সমস্যা ({e}), পুনরায় ট্রেইন করা হচ্ছে...")
-        return train_model()
-
-def detect_hate_speech(text):
-    model, vectorizer = load_model()
-    if model is None: return 0, [1.0, 0.0]
-
-    processed_text = preprocess_text(text)
-    X = vectorizer.transform([processed_text])
-    
-    prediction = model.predict(X)[0]
-    probability = model.predict_proba(X)[0]
-    
-    contains_hate_keyword = any(keyword in processed_text for keyword in HATE_KEYWORDS)
-    if contains_hate_keyword:
-        prediction = 1
-        
-    return prediction, probability
+# --- Flask Routes ---
 
 @app.route('/')
 def home():
@@ -127,23 +62,91 @@ def home():
 
 @app.route('/detect', methods=['POST'])
 def detect():
-    text = request.get_json().get('text', '').strip()
-    if not text: return jsonify({'error': 'দয়া করে টেক্সট লিখুন'}), 400
-    
-    prediction, probability = detect_hate_speech(text)
-    hate_prob = round(probability[1] * 100, 2)
-    normal_prob = round(probability[0] * 100, 2)
-    
-    result = "হ্যাট স্পিচ" if prediction == 1 else "নরমাল স্পিচ"
-    return jsonify({'result': result, 'hate_prob': hate_prob, 'normal_prob': normal_prob})
+    if not MODELS or not VECTORIZERS:
+        return jsonify({'error': 'কোনো মডেলই সার্ভারে লোড হয়নি। অ্যাডমিনের সাথে যোগাযোগ করুন।'}), 503
+
+    try:
+        text = request.get_json().get('text', '').strip()
+        if not text:
+            return jsonify({'error': 'দয়া করে টেক্সট লিখুন'}), 400
+
+        try:
+            lang_code = detect_language(text)
+            logger.info(f"শনাক্ত করা ভাষা: '{lang_code}'")
+        except LangDetectException:
+            logger.warning("ভাষা শনাক্ত করা যায়নি। ডিফল্ট হিসেবে বাংলা (bn) ব্যবহার করা হচ্ছে।")
+            lang_code = 'bn'
+
+        model_to_use, vectorizer_to_use = None, None
+        if lang_code in MODELS:
+            model_to_use = MODELS[lang_code]
+            vectorizer_to_use = VECTORIZERS[lang_code]
+        elif 'en' in MODELS:
+            model_to_use = MODELS['en']
+            vectorizer_to_use = VECTORIZERS['en']
+        elif 'bn' in MODELS:
+            model_to_use = MODELS['bn']
+            vectorizer_to_use = VECTORIZERS['bn']
+
+        if model_to_use is None:
+            return jsonify({'error': 'প্রেডিকশনের জন্য কোনো উপযুক্ত মডেল পাওয়া যায়নি।'}), 501
+
+        processed_text = preprocess_text(text)
+        if not processed_text:
+            return jsonify({'text': text, 'result': 'নরমাল স্পিচ', 'hate_prob': 0.0, 'normal_prob': 100.0})
+
+        vectorized_text = vectorizer_to_use.transform([processed_text])
+        prediction = model_to_use.predict(vectorized_text)[0]
+        probability = model_to_use.predict_proba(vectorized_text)[0]
+        
+        hate_prob = round(float(probability[1]) * 100, 2)
+        normal_prob = round(float(probability[0]) * 100, 2)
+        
+        result = "হ্যাট স্পিচ" if prediction == 1 else "নরমাল স্পিচ"
+        
+        return jsonify({
+            'text': text,
+            'result': result,
+            'hate_prob': hate_prob,
+            'normal_prob': normal_prob
+        })
+
+    except Exception as e:
+        logger.error(f"'/detect' রুটে ত্রুটি: {e}", exc_info=True)
+        return jsonify({'error': 'সার্ভারে একটি অপ্রত্যাশিত সমস্যা হয়েছে'}), 500
+
+@app.route('/report_wrong', methods=['POST'])
+def handle_wrong_report():
+    try:
+        data = request.get_json()
+        text, model_prediction = data.get('text'), data.get('model_prediction')
+        if not text or model_prediction is None:
+            return jsonify({'error': 'অসম্পূর্ণ ডেটা পাঠানো হয়েছে।'}), 400
+
+        correct_label = 1 - int(model_prediction)
+        report_file = os.path.join('data', 'wrong_predictions.csv')
+        os.makedirs('data', exist_ok=True)
+        
+        with wrong_prediction_lock:
+            file_exists = os.path.isfile(report_file)
+            with open(report_file, 'a', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=['text', 'correct_label'])
+                if not file_exists:
+                    writer.writeheader()
+                writer.writerow({'text': text, 'correct_label': correct_label})
+        
+        logger.info(f"একটি ভুল রিপোর্ট সফলভাবে সেভ করা হয়েছে।")
+        return jsonify({'message': 'আপনার মতামতের জন্য ধন্যবাদ!'})
+        
+    except Exception as e:
+        logger.error(f"'/report_wrong' রুটে ত্রুটি: {e}", exc_info=True)
+        return jsonify({'error': 'সার্ভারে রিপোর্ট সেভ করা সম্ভব হয়নি।'}), 500
 
 if __name__ == '__main__':
-    if not os.path.exists('data/Cleaned_Bangla_hatespeech.csv') and os.path.exists('data/Bangla_hatespeech.csv'):
-        try:
-            import clean_dataset
-            clean_dataset.clean_dataset('data/Bangla_hatespeech.csv', 'data/Cleaned_Bangla_hatespeech.csv')
-        except ImportError:
-            logger.error("'clean_dataset.py' পাওয়া যায়নি।")
-
-    load_model()
-    app.run(host='0.0.0.0', port=5000)
+    try:
+        import langdetect
+    except ImportError:
+        logger.error("`langdetect` লাইব্রেরি ইনস্টল করা নেই। `pip install langdetect` চালান।")
+    
+    load_all_models()
+    app.run(host='0.0.0.0', port=5000, debug=False)

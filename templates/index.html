@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>বাংলা হ্যাট স্পিচ ডিটেক্টর</title>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <!-- === পরিবর্তন এখানে === -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ version }}">
 </head>
 <body>
     <div class="container">
@@ -22,7 +23,7 @@
             <div class="spinner"></div>
         </button>
         
-        <div id="result-container" class="result-container">
+        <div id="result-container" class="result-container" style="display: none;"> <!-- Initially hidden -->
             <div class="result-header">
                 <i id="result-icon" class="fas"></i>
                 <h2 id="result-text">ফলাফল:</h2>
@@ -55,10 +56,22 @@
                     </div>
                 </div>
             </div>
+
+            <!-- === নতুন ফিডব্যাক সেকশন শুরু === -->
+            <div id="feedback-section" style="display: none; margin-top: 20px; text-align: center; border-top: 1px solid #eee; padding-top: 15px;">
+                <p style="font-size: 14px; color: #555;">
+                    যদি আমাদের দেওয়া উত্তরটি ভুল হয়ে থাকে, তবে নিচের বাটনে চাপ দিন।
+                </p>
+                <button id="report-wrong-btn" class="btn btn-danger">
+                    <i class="fas fa-flag"></i> উত্তরটি ভুল
+                </button>
+            </div>
+            <!-- === নতুন ফিডব্যাক সেকশন শেষ === -->
+
         </div>
         
         <div class="footer">
-            <p>© 2023 বাংলা হ্যাট স্পিচ ডিটেক্টর | সকল অধিকার সংরক্ষিত</p>
+            <p>© 2025 বাংলা হ্যাট স্পিচ ডিটেক্টর | সকল অধিকার সংরক্ষিত</p>
         </div>
     </div>
     
@@ -75,97 +88,129 @@
             const normalPercent = document.getElementById('normal-percent');
             const hateProgress = document.getElementById('hate-progress');
             const normalProgress = document.getElementById('normal-progress');
+            const feedbackSection = document.getElementById('feedback-section'); // নতুন
+            const reportWrongBtn = document.getElementById('report-wrong-btn'); // নতুন
+
+            // === নতুন ভ্যারিয়েবল শুরু ===
+            let lastSubmittedText = '';
+            let lastModelPrediction = -1; // 0 for Normal, 1 for Hate
+            // === নতুন ভ্যারিয়েবল শেষ ===
             
-            // চেক বাটনে ক্লিক ইভেন্ট
             checkBtn.addEventListener('click', function() {
                 const text = inputText.value.trim();
-                
-                // ভ্যালিডেশন চেক
                 if (!text) {
                     showError("দয়া করে টেক্সট লিখুন");
                     return;
                 }
                 
-                // লোডিং স্টেট
                 checkBtn.disabled = true;
                 checkBtn.classList.add('loading');
                 hideError();
                 hideResult();
                 
-                // AJAX রিকোয়েস্ট
                 fetch('/detect', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ text: text })
                 })
                 .then(response => {
                     if (!response.ok) {
-                        throw new Error('সার্ভার থেকে সঠিক রেসপন্স পাইনি');
+                        return response.json().then(err => { throw new Error(err.error || 'সার্ভার থেকে সঠিক রেসপন্স পাইনি'); });
                     }
                     return response.json();
                 })
                 .then(data => {
-                    // ফলাফল দেখান
                     showResult(data);
+                    
+                    // === নতুন কোড শুরু ===
+                    // শেষ সাবমিট করা টেক্সট এবং মডেলের প্রেডিকশন সেভ করা
+                    lastSubmittedText = text;
+                    lastModelPrediction = (data.result === 'হ্যাট স্পিচ') ? 1 : 0;
+                    
+                    // ফিডব্যাক সেকশনটি দেখানো
+                    feedbackSection.style.display = 'block';
+                    // === নতুন কোড শেষ ===
                 })
                 .catch(error => {
-                    showError(`ত্রুটি: ${error.message || 'সার্ভারে সমস্যা হয়েছে'}`);
+                    showError(`ত্রুটি: ${error.message}`);
                 })
                 .finally(() => {
-                    // লোডিং শেষ
                     checkBtn.disabled = false;
                     checkBtn.classList.remove('loading');
                 });
             });
             
-            // এরর মেসেজ দেখানো
+            // === নতুন ইভেন্ট লিসেনার শুরু ===
+            reportWrongBtn.addEventListener('click', function() {
+                if (!lastSubmittedText) return;
+
+                // বাটনটি ডিসেবল করে দেওয়া
+                reportWrongBtn.disabled = true;
+                reportWrongBtn.textContent = 'ধন্যবাদ!';
+
+                fetch('/report_wrong', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        text: lastSubmittedText,
+                        model_prediction: lastModelPrediction
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    // ছোট একটি পপ-আপ মেসেজ দেখানো যেতে পারে
+                    // alert(data.message); 
+                })
+                .catch(error => {
+                    console.error('Error reporting wrong prediction:', error);
+                    showError('ত্রুটি: আপনার রিপোর্ট পাঠানো যায়নি।');
+                    // বাটনটি আবার এনেবল করা
+                    reportWrongBtn.disabled = false;
+                    reportWrongBtn.innerHTML = '<i class="fas fa-flag"></i> উত্তরটি ভুল';
+                });
+            });
+            // === নতুন ইভেন্ট লিসেনার শেষ ===
+
             function showError(message) {
                 errorMessage.textContent = message;
                 errorMessage.style.display = 'block';
                 resultContainer.style.display = 'none';
             }
             
-            // এরর লুকানো
             function hideError() {
                 errorMessage.style.display = 'none';
             }
             
-            // ফলাফল লুকানো
             function hideResult() {
                 resultContainer.style.display = 'none';
+                feedbackSection.style.display = 'none'; // ফিডব্যাক সেকশনও হাইড করা
             }
             
-            // ফলাফল দেখানো
             function showResult(data) {
-                // রেজাল্ট ক্লাস সেট করা
-                resultContainer.className = 'result-container ' + data.result_class;
+                resultContainer.className = 'result-container ' + (data.result === 'হ্যাট স্পিচ' ? 'hate' : 'normal');
+                resultIcon.className = (data.result === 'হ্যাট স্পিচ' ? 'fas fa-exclamation-triangle' : 'fas fa-check-circle');
                 
-                // আইকন সেট করা
-                if (data.result_class === 'hate') {
-                    resultIcon.className = 'fas fa-exclamation-triangle';
-                } else {
-                    resultIcon.className = 'fas fa-check-circle';
-                }
-                
-                // টেক্সট সেট করা
                 resultText.textContent = 'ফলাফল: ' + data.result;
+                // outputText.textContent = `"${data.text}"`; // এই লাইনটি আপনার ডিজাইনে সমস্যা করতে পারে, তাই কমেন্ট আউট করা হলো
                 outputText.textContent = data.text;
+                
                 hatePercent.textContent = data.hate_prob + '%';
                 normalPercent.textContent = data.normal_prob + '%';
                 
-                // প্রোগ্রেস বার এনিমেশন
+                hateProgress.style.width = '0%';
+                normalProgress.style.width = '0%';
+
                 setTimeout(() => {
                     hateProgress.style.width = data.hate_prob + '%';
                     normalProgress.style.width = data.normal_prob + '%';
                 }, 100);
                 
-                // রেজাল্ট দেখানো
                 resultContainer.style.display = 'block';
-                
-                // স্ক্রল টু রেজাল্ট
                 resultContainer.scrollIntoView({ behavior: 'smooth' });
+
+                // ফিডব্যাক বাটন রিসেট করা
+                reportWrongBtn.disabled = false;
+                reportWrongBtn.innerHTML = '<i class="fas fa-flag"></i> উত্তরটি ভুল';
             }
         });
     </script>
